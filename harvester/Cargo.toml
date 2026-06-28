@@ -1,0 +1,56 @@
+[package]
+name = "harvester"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.78"
+description = "Overnight Jamendo MP3 ingester: rate-limited download + multi-resolution audio features into SQLite"
+
+[[bin]]
+name = "harvest"
+path = "src/main.rs"
+
+[dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "fs", "signal", "net"] }
+reqwest = { version = "0.12", features = ["rustls-tls", "stream", "json"], default-features = false }
+# gateway binary: an HTTP server that mirrors the Cyanite REST API, backed by the
+# same Postgres as the harvester (single source of truth + shared response cache).
+axum = "0.7"
+serde_json = "1"
+futures = "0.3"
+tokio-stream = "0.1"
+# Postgres + connection pool: shared work queue (FOR UPDATE SKIP LOCKED) so many
+# worker processes / containers drain it in parallel with no double-work.
+sqlx = { version = "0.8", features = ["runtime-tokio", "tls-rustls", "postgres"], default-features = false }
+governor = "0.7"
+nonzero_ext = "0.3"
+clap = { version = "4", features = ["derive", "env"] }
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+csv = "1"
+sha2 = "0.10"
+# zstd: the compressor behind Normalized Compression Distance (NCD), our
+# parameter-free Kolmogorov-style structural similarity axis.
+zstd = "0.13"
+
+# DSP core, chosen by the vet-audio-crates workflow: rosa is librosa-in-Rust
+# (numerically validated), single-crate coverage of decode + mel-stack + mfcc +
+# chroma + spectral + rms + zcr + tempo. Pinned exactly — an unattended overnight
+# run must not float a v0.1 dependency. ffmpeg (system) is the decode fallback.
+# DSP core: rosa (librosa-in-Rust, numerically validated) — decode + mel-stack +
+# mfcc + chroma + spectral centroid/rolloff/bandwidth/flatness + rms + zcr + tempo.
+rosa = "=0.1.0"
+
+# aubio: higher-order spectral moments (skewness/kurtosis/slope/decrease), tempo
+# *confidence*, and an onset rate — descriptors rosa does not provide. GPL-3.0;
+# its bundled C needs a CFLAGS flag on GCC>=14, baked into .cargo/config.toml so
+# `cargo build` works unattended.
+aubio = { version = "0.2", features = ["builtin"] }
+
+# dasp_rs: used for algorithms we would otherwise hand-roll (spectral flux).
+dasp-rs = "0.5.0"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+# catch_unwind (per-file panic isolation) requires unwind, not abort.
+panic = "unwind"

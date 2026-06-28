@@ -1,0 +1,6 @@
+target
+corpus
+*.db
+*.db-*
+*.log
+.git

@@ -1,0 +1,7 @@
+# aubio's bundled C library (aubio-sys) fails to compile on GCC >= 14 because
+# strutils.c calls strncasecmp under -std=c99 without _GNU_SOURCE, which modern
+# GCC treats as a fatal implicit-function-declaration. Baking the flag here means
+# `cargo build` works unattended on the server without anyone exporting CFLAGS.
+# force=true so it applies even if the environment already sets CFLAGS.
+[env]
+CFLAGS = { value = "-D_GNU_SOURCE -Wno-implicit-function-declaration", force = true }

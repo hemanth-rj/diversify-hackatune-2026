@@ -1,0 +1,56 @@
+# Parallel harvester stack:
+#   postgres (pgvector) -> shared work queue + feature store + vector search
+#   init                -> one-shot: loads tracks.csv metadata
+#   worker              -> scalable: claims + downloads + featurizes (SKIP LOCKED)
+#
+# Run:   docker compose up --build --scale worker=4
+# Status: docker compose run --rm worker status
+services:
+  postgres:
+    image: pgvector/pgvector:pg16   # Postgres 16 with the pgvector extension
+    environment:
+      POSTGRES_USER: harvest
+      POSTGRES_PASSWORD: harvest
+      POSTGRES_DB: harvest
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U harvest"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  init:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://harvest:harvest@postgres:5432/harvest
+    volumes:
+      - ../data:/data:ro
+    command: ["init", "--tracks", "/data/tracks.csv"]
+    restart: "no"
+
+  worker:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+      init:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: postgres://harvest:harvest@postgres:5432/harvest
+    volumes:
+      - ./corpus:/app/corpus        # transient in-flight audio (deleted after featurize)
+    # --delete-after: remove each MP3 once featurized (signatures live in Postgres),
+    # so a small disk never fills. 2 replicas x concurrency 4 = 8 featurizers (8-core box).
+    command: ["run", "--out", "corpus/audio", "--concurrency", "4", "--dl-concurrency", "6", "--rps", "6", "--delete-after"]
+    # scale with: docker compose up --build --scale worker=N
+    deploy:
+      replicas: 2
+
+volumes:
+  pgdata:
