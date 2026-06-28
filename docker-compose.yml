@@ -1,0 +1,19 @@
+# One-command local run: `docker compose up --build`
+# Requires backend/.env (copy backend/.env.sample -> backend/.env and add your keys).
+services:
+  backend:
+    build: ./backend            # the Brief/Taste FastAPI (Diversify backend)
+    env_file: ./backend/.env
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_DIVERSIFY_API: http://localhost:8000/api
+    ports:
+      - "5173:80"             # open http://localhost:5173
+    depends_on:
+      - backend

@@ -3,87 +3,99 @@
 **Explainable, audio-based music discovery on the Cyanite API.**
 Built for the Cyanite challenge at HACKATUNE 2026 (Munich Music Labs).
 
-Diversify lets you find the right track through *how it actually sounds* — by brief, by
-conversation, by a listener's taste, by a reference song, or by an image — and every result
-can answer **"why this track?"** grounded in Cyanite's audio analysis.
+Find the right track through *how it actually sounds* — by brief, conversation, a listener's
+taste, a reference song, or an image — and every result can answer **"why this track?"** grounded
+in Cyanite's audio analysis.
 
 ## The five ways in
 
-| Tab | What it does | Powered by |
-|---|---|---|
-| **Brief** | Type a scene/brief → a persona-aware pitch list of sync-ready tracks, each with a reason | Cyanite live (prompt search + tags) |
-| **Chat** | Conversational, steerable discovery — describe a vibe and refine it | Cyanite tags + learned-weight ranking |
-| **Taste** | Pick a listener → their taste profile (mood / valence / instruments) + a personalized stream | Cyanite multi-track similarity |
-| **Similar** | Upload a reference audio file → acoustically similar tracks + predicted audio profile | Raw audio features (pgvector / NCD) |
-| **MoodBoard** | Upload an image → music that matches its visual vibe | Gemini Vision → Cyanite |
+| Tab | What it does |
+|---|---|
+| **Brief** | Type a scene/brief → a persona-aware pitch list, each track with a reason |
+| **Chat** | Conversational, steerable discovery |
+| **Taste** | Pick a listener → their taste profile + a personalized stream |
+| **Similar** | Upload a reference audio file → acoustically similar tracks |
+| **MoodBoard** | Upload an image → music that matches its visual vibe |
 
 Every track opens a detail view with its Cyanite tags, audio features, and a **log-mel
-spectrogram** — the "why this track?" the brief asks for.
+spectrogram**.
 
-## Architecture (hybrid, three backends behind one UI)
-
-A single React frontend talks to three services. Cyanite is the recommendation engine; the
-self-built audio layer validates and extends it (it never replaces Cyanite as the recommender).
+## Repository layout
 
 ```
-                 React + Vite + TypeScript frontend (this repo /frontend)
-                 Brief · Chat · Taste · Similar · MoodBoard
-                          │            │              │
-        product path      │   discovery path          │  cover art / spectrogram
-                          ▼            ▼               ▼
-            Diversify backend     Discovery backend      Deep server
-            (FastAPI, Cyanite     (Postgres + learned     (audio features,
-             live + personas)      weights + audio)        grounding, spectrograms)
-                          │
-                  Cyanite via caching gateway (cached, quota-safe)
+frontend/            React + Vite + TypeScript app (the UI)
+backend/             Brief/Taste FastAPI — the backend you run locally
+discovery-service/   Discovery engine source (Chat/Similar/MoodBoard) — runs as a hosted service
+docs/                Architecture, decisions, deployment
+docker-compose.yml   One-command local run (frontend + backend)
 ```
 
-- **Diversify backend** — FastAPI (`mml-hackatune-26`): Brief/Taste/Chat/Image, persona ranking,
-  sync-clearance, response caching, Jamendo artwork proxy. Calls Cyanite through a caching
-  gateway. (Its own CI/tests/docs live in that repo.)
-- **Discovery backend** (`backend/` here) — Orkun's engine: Chat/Similar/MoodBoard over Postgres.
-- **Deep server** — Erkin's research service: audio similarity, spectrograms, and audio↔tag
-  grounding/validation.
+> **Heads-up on what runs where.** `frontend/` + `backend/` run on any machine (below). The
+> **discovery** and **deep** services behind Chat/Similar/MoodBoard/spectrograms need a 57 GB
+> Postgres DB + a Rust feature-extractor + a 50k-track audio corpus, so they can't run on a
+> laptop — the app consumes them as **hosted services** over the network (configurable via env).
+> Out of the box those point at the team's hosted instance; **Brief and Taste are fully local.**
 
-Full detail in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md); the merge rationale is in
-[docs/DECISIONS.md](docs/DECISIONS.md); deployment in [docs/DEPLOY.md](docs/DEPLOY.md).
+## Run it (clone-and-run)
 
-## Run it locally
+### Prereqs
+Python 3.11+, Node 20+, and Cyanite + Gemini API keys.
 
-**Frontend:**
+### 1. Backend (Brief/Taste) — `backend/`
+
+```bash
+cd backend
+cp .env.sample .env          # then fill in your keys (see below)
+pip install -r api/requirements.txt
+python api/warm_cache.py      # optional: pre-bake the 5 listeners for instant Taste
+uvicorn api.server:app --port 8000
+```
+
+`backend/.env`:
+
+```
+CYANITE_API_KEY=cyk__...
+CYANITE_ACCOUNT=acc_...
+GEMINI_API_KEY=AIza...
+JAMENDO_CLIENT_ID=...          # optional, for artwork
+# CYANITE_BASE_URL=...         # optional, route Cyanite through a caching gateway
+```
+
+### 2. Frontend — `frontend/`
 
 ```bash
 cd frontend
 npm install
-npm run dev          # http://localhost:5173
+npm run dev                    # http://localhost:5173
 ```
 
-The frontend reads backend URLs from build-time env vars (sensible localhost/team-server
-defaults if unset):
+Backend URLs are configurable env vars (sensible defaults if unset):
 
 | Var | Points at | Default |
 |---|---|---|
-| `VITE_DIVERSIFY_API` | Diversify backend `/api` | `http://localhost:8000/api` |
-| `VITE_ORKUN_API` | Discovery backend `/api` | `http://95.216.72.161:8001/api` |
-| `VITE_ERKIN_API` | Deep server (spectrograms) | `http://95.216.72.161:8000` |
-| `VITE_JAMENDO_CLIENT_ID` | (optional) artwork | falls back to the proxy |
+| `VITE_DIVERSIFY_API` | the local Brief/Taste backend | `http://localhost:8000/api` |
+| `VITE_ORKUN_API` | hosted discovery service | `http://95.216.72.161:8001/api` |
+| `VITE_ERKIN_API` | hosted deep service (spectrograms) | `http://95.216.72.161:8000` |
 
-The **Diversify backend** must be running for Brief/Taste (`uvicorn api.server:app --port 8000`
-from the `mml-hackatune-26` repo); the discovery + deep backends are already live on the team
-server.
+With the backend on `:8000` and the frontend on `:5173`, **Brief and Taste work fully locally**;
+Chat/Similar/MoodBoard use the hosted services.
+
+### Or: one command with Docker
+
+```bash
+cp backend/.env.sample backend/.env   # add your keys
+docker compose up --build             # frontend on http://localhost:5173, backend on :8000
+```
 
 ## Tests & CI
 
-`npm run build` runs `tsc` (full typecheck) then `vite build`, so a green build is the type +
-compile gate. CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs it on every
-push/PR. The Diversify backend has its own pytest + ruff CI in its repo.
+`cd frontend && npm run build` runs `tsc` (full typecheck) then `vite build` — a green build is
+the type + compile gate, and CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs it on
+every push/PR. The backend has its own `pytest` + `ruff` suite (`cd backend && pytest`).
 
-```bash
-cd frontend && npm run build   # typecheck + production build
-```
+## Architecture & decisions
 
-## Constraints honored
-
-Content/audio-based and **Cyanite-central**; **no collaborative filtering** (the audio engine
-runs CF only as an offline benchmark, never shipped); no raw embeddings used as the recommender.
-See [docs/DECISIONS.md](docs/DECISIONS.md).
+Hybrid: **Cyanite is the recommendation engine; a self-built audio layer validates and extends it
+but never replaces it**, and **no collaborative filtering** is shipped. Full detail in
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), rationale in [docs/DECISIONS.md](docs/DECISIONS.md),
+hosted deployment in [docs/DEPLOY.md](docs/DEPLOY.md).
